@@ -7,7 +7,7 @@ function useUART() {
   const [uartData, setUartData] = useState("");
   const [status, setStatus] = useState("Disconnected");
 
-  const connectSerial = async (parseDeviceInfo) => {
+  const connectSerial = async (parseDeviceInfo, isStarted, mode, timer, setCapturedPackets) => {
     try {
       const selectedPort = await navigator.serial.requestPort();
       await selectedPort.open({ baudRate: 115200 });
@@ -68,7 +68,14 @@ function useUART() {
                   packetBuffer = new Uint8Array([byte]);
                 } else if (byte === 0xfe && packetBuffer.length > 0) {
                   packetBuffer = new Uint8Array([...packetBuffer, byte]);
-                  // Handle packet processing here if needed
+                  if (isStarted && mode === 'capture') {
+                    const hexData = Array.from(packetBuffer).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                    setCapturedPackets(prev => {
+                      const newPackets = [...prev, { timestamp: timer, data: hexData }];
+                      setUartData(newPackets.map(p => `${p.timestamp} - ${p.data}`).join('\n'));
+                      return newPackets;
+                    });
+                  }
                   packetBuffer = new Uint8Array();
                 } else if (packetBuffer.length > 0) {
                   packetBuffer = new Uint8Array([...packetBuffer, byte]);

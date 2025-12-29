@@ -21,7 +21,7 @@ export default function App() {
   }, [uartData]);
 
   const handleConnectSerial = async () => {
-    await connectSerial(parseDeviceInfo);
+    await connectSerial(parseDeviceInfo, isStarted, mode, timer, setCapturedPackets);
   };
 
   const handleDisconnectSerial = async () => {
