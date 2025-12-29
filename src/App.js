@@ -1,110 +1,18 @@
 import { useState, useRef, useEffect } from "react";
 import "./App.css";
-
-
-function getTime(){
-  const now = new Date();
-
-// Get hours and minutes
-const hours = now.getHours().toString().padStart(2, '0');
-const minutes = now.getMinutes().toString().padStart(2, '0');
-
-// Format as hh:mm
-const timeString = `${hours}:${minutes}`;
-  return timeString;
-
-}
-
-
-function transformMessage(msg) {
-    const prefix = "*CHENA:";
-    const suffix = "#";
-    const core = msg.slice(prefix.length, -1); // "1:1:0:1:1:1:1"
-
-    const parts = core.split(':'); // ['1', '1', '0', '1', '1', '1', '1']
-    
-    let result = [parts[0]]; // Keep the first part as-is ('1')
-
-    for (let i = 1; i < parts.length; i++) {
-        if (parts[i] === '1') {
-            result.push((i + 1).toString());  // Position index +1
-        }
-    }
-
-    return `${result.join(':')}`;
-}
-
-
-
-
-
-function InfoCard({ deviceInfo }) {
-  const statusIndex = deviceInfo.ssid; // This holds ssids[0], i.e., "0", "1", "2", etc.
-
-
-  return (
-    <div className="info-card" style={{ padding: "10px", borderRadius: "5px" }}>
-      <strong>SSID:</strong>{" "}
-      <span style={{ color: statusIndex === "1" ? "green" : "red" }}>
-        {deviceInfo.ssid1 || "-"}
-      </span>{" "}
-      <span style={{ color: statusIndex === "2" ? "green" : "red" }}>
-        {deviceInfo.ssid2 || "-"}
-      </span>{" "}
-      <span style={{ color: statusIndex === "3" ? "green" : "red" }}>
-        {deviceInfo.ssid3 || "-"}
-      </span>
-    </div>
-  );
-}
+import DeviceInfoCards from "./components/DeviceInfoCards";
+import useUART from "./hooks/useUART";
+import useDeviceInfo from "./hooks/useDeviceInfo";
+import useCapturePlay from "./hooks/useCapturePlay";
+import InfoCard from "./components/InfoCard";
 
 export default function App() {
-  const [port, setPort] = useState(null);
-  const [writer, setWriter] = useState(null);
-  const [reader, setReader] = useState(null);
-  const [uartData, setUartData] = useState("");
   const [msg, setMsg] = useState("");
-  const [status, setStatus] = useState("Disconnected");
-  const [capture,setCapture]=useState(false);
-  const [mode, setMode] = useState('capture'); // 'capture' or 'play'
-  const [isStarted, setIsStarted] = useState(false);
-  const [timer, setTimer] = useState('00:00:00');
-  const [fileName, setFileName] = useState('');
-  const [capturedPackets, setCapturedPackets] = useState([]);
-  const timerRef = useRef(null);
-
-  // Parsed device info
-  const [deviceInfo, setDeviceInfo] = useState({
-    macId: "",
-    fwVersion: "",
-    serialNumber: "",
-    ssid: "",
-    ssid1: "",
-    ssid2: "",
-    ssid3: "",
-    hbt_counter:0,
-    hbt_timer:0,
-    wifi_errors:0,
-    tcp_errors:0,
-    mqtt_errors:0,
-    mqtt_status:"FAILED",
-    tcp_status:"FAILED",
-    wifi_status:"FAILED",
-    wifi_failure_duration: "", // Store the duration
-    wifi_failed_at: "", // Reset failure timestamp
-    lastTc:"",
-    lastPulses:"",
-    tc:"",
-    pulses:"",
-    tcp_command:"",
-    mqtt_command:"",
-    tcp_command_time:"",
-    mqtt_command_time:"",
-    inh:"",
-
-  });
-
   const terminalRef = useRef(null);
+
+  const { port, writer, reader, uartData, status, connectSerial, disconnectSerial, sendSerial, setUartData } = useUART();
+  const { deviceInfo, setDeviceInfo, parseDeviceInfo } = useDeviceInfo(status);
+  const { mode, setMode, isStarted, timer, fileName, setFileName, capturedPackets, setCapturedPackets, handleStart, handleStop } = useCapturePlay();
 
   useEffect(() => {
     if (terminalRef.current) {
@@ -112,486 +20,55 @@ export default function App() {
     }
   }, [uartData]);
 
-  // Parse terminal data into device info
-  const parseDeviceInfo = (data) => {
-    console.log(data);
-  const info = { macId: "", fwVersion: "", serialNumber: "",ssid: "", ssid1: "",ssid2:"",ssid3:"" ,tc:"",pulses:"",lastTc:"",lastPulses:"",tcp_command:"",mqtt_command:"",tcp_command_time:"",mqtt_command_time:"",inh:""};
+  const handleConnectSerial = async () => {
+    await connectSerial(parseDeviceInfo);
+  };
 
- if (data.startsWith("*MAC:")) {
-      console.log(data);
-      // Remove *MAC: and any leading/trailing spaces
-      const macLine = data.replace("*MAC:", "").trim();
-
-      // Split by ':' — last part is Serial Number
-      const parts = macLine.split(":");
-      if (parts.length >= 7) {
-        info.macId = parts.slice(0, 6).join(":");      // D4:8A:FC:C3:F0:34
-        info.serialNumber = parts[6].replace(/#$/, "");                  // 999999
-      }
-    }  else if (data.startsWith("*FW:")) {
-    let fwLine = data.replace("*FW:", "").trim();
-    if (fwLine.startsWith("*")) fwLine = fwLine.substring(1); // remove leading *
-    info.fwVersion = fwLine.split(" ")[0]; // take first word as version
-  } else if (data.startsWith("*SSID")) {
-      console.log(data);
-      // Remove leading *SSID, and split by ','
-      const ssidParts = data.replace("*SSID,", "").split(",");
-      // Take elements from index 3 onward as actual SSIDs
-      const ssids = ssidParts.slice(2).filter(Boolean); 
-     
-     
-      info.ssid1 = ssids[1];// Join multiple SSIDs
-      info.ssid2= ssids[2];
-      info.ssid3=ssids[3].replace(/#$/, "");  
-    }
-    else if(data.startsWith("*HBT-")){
-      console.log(data);
-      setDeviceInfo((prev) => ({
-        ...prev,
-        hbt_counter: (prev.hbt_counter || 0) + 1,
-        hbt_timer: 0,
-      }));
-       
-    }
-    else if(data.startsWith("*TCP-NOTOK#")){
-
-       
-    
-      setDeviceInfo((prev) => {
-         const lastStatus = prev.tcp_status;
-         const tcp_errors =
-            lastStatus === "SUCCESS"
-              ? (prev.tcp_errors || 0) + 1
-              : prev.tcp_errors || 0;
-
-        
-
-          return {
-            ...prev,
-            tcp_errors,
-            tcp_status: "FAILED",
-          };
-       
-      });
-      
-    }
-     else if(data.startsWith("*TCP-OK#")){
-      setDeviceInfo((prev) => ({
-        ...prev,
-        tcp_status:"SUCCESS"
-      }));
-    }
-    else if (data.startsWith("*WiFi:")) {
-      const now = Date.now();
-      setDeviceInfo((prev) => {
-        const failedAt = prev.wifi_failed_at || now;
-        const timeDiffSeconds = Math.floor((now - failedAt) / 1000); // Time diff in seconds
-
-        console.log("Time difference since failure:", timeDiffSeconds, "seconds");
-
-        return {
-          ...prev,
-          ssid: data.replace("*WiFi:", "").replace("#", "").trim(),
-          wifi_status: "SUCCESS",
-          wifi_failure_duration: getTime(), // Store the duration
-          
-        };
-      });
-    }
-
-    else if (data.startsWith("*MQTT,")) {
-      const match = data.match(/\*MQTT,(\d+)(?: (.+))?#/);
-      const status = match && match[2] ? match[2].trim() : "SUCCESS";
-
-      setDeviceInfo((prev) => {
-        const lastStatus = prev.mqtt_status;
-       
-        const mqtt_errors =
-          status === "FAILED" && lastStatus === "SUCCESS"
-            ? (prev.mqtt_errors || 0) + 1
-            : prev.mqtt_errors || 0;
-
-        return {
-          ...prev,
-          mqtt_errors,
-          mqtt_status: status,
-        };
-      });
-     
-      
-    }
-    else if(data.startsWith("*SEARCHING WIFI"))
-    {
-        
-        setDeviceInfo((prev) => {
-         const lastStatus = prev.wifi_status;
-         const wifi_errors =
-            lastStatus === "SUCCESS"
-              ? (prev.wifi_errors || 0) + 1
-              : prev.wifi_errors || 0;
-
-          console.log("WIFI LAST STATUS:", lastStatus);
-          console.log("WIFI Status: FAILED");
-
-          return {
-            ...prev,
-            wifi_errors,
-            wifi_status: "FAILED",
-            ssid:"0",
-            wifi_failed_at: lastStatus === "SUCCESS" ? getTime() : prev.wifi_failed_at,
-            wifi_failure_duration:"-"
-          };
-       
-      });
-    }
-     else if(data.startsWith("*TCP-"))
-    {
-      info.tcp_command=data;
-      info.tcp_command_time=getTime();
-    }
-     else if(data.startsWith("*MQTT-"))
-    {
-       info.mqtt_command=data;
-       info.mqtt_command_time=getTime();
-    }
-    else if(data.startsWith("*TC"))
-    {
-      setDeviceInfo((prev) => ({
-        ...prev,
-        lastTc:prev.tc
-      }));
-      info.tc=data;
-    }
-    else if(data.startsWith("*CHENA"))
-    {
-       setDeviceInfo((prev) => ({
-        ...prev,
-        lastPulses:prev.pulses
-      }));
-      info.pulses=transformMessage(data);
-    }
-    else if(data.startsWith("*INH,"))
-    {
-       info.inh = data.split(",")[1].replace(/#$/, "");
-      
-    }
-
-
-
-  // Update only non-empty values
-  setDeviceInfo((prev) => ({
-    macId: info.macId || prev.macId,
-    serialNumber: info.serialNumber || prev.serialNumber,
-    fwVersion: info.fwVersion || prev.fwVersion,
-    ssid:info.ssid || prev.ssid,
-    ssid1: info.ssid1 || prev.ssid1,
-    ssid2: info.ssid2 || prev.ssid2,
-    ssid3: info.ssid3 || prev.ssid3,
-    hbt_counter:info.hbt_counter || prev.hbt_counter,
-    hbt_timer:info.hbt_timer || prev.hbt_timer,
-    wifi_errors:info.wifi_errors || prev.wifi_errors,
-    tcp_errors:info.tcp_errors || prev.tcp_errors,
-    mqtt_errors:info.mqtt_errors || prev.mqtt_errors,
-    mqtt_status: info.mqtt_status || prev.mqtt_status,
-    tcp_status:info.tcp_status || prev.tcp_status,
-    wifi_status:info.wifi_status || prev.wifi_status,
-    wifi_failure_duration: info.wifi_failure_duration || prev.wifi_failure_duration,
-    wifi_failed_at: info.wifi_failed_at || prev.wifi_failed_at, // Reset failure timestamp
-    tc:info.tc || prev.tc,
-    pulses: info.pulses || prev.pulses,
-    lastTc:info.lastTc || prev.lastTc,
-    lastPulses:info.lastPulses || prev.lastPulses,
-    tcp_command:info.tcp_command || prev.tcp_command,
-    mqtt_command:info.mqtt_command || prev.mqtt_command,
-    tcp_command_time:info.tcp_command_time || prev.tcp_command_time,
-    mqtt_command_time:info.mqtt_command_time || prev.mqtt_command_time,
-    inh:info.inh || prev.inh,
-    
-
-  }));
-};
-
-useEffect(() => {
-  let intervalId;
-
-  if (status === "Connected") {
-    intervalId = setInterval(() => {
-      setDeviceInfo((prev) => ({
-        ...prev,
-        hbt_timer: (prev.hbt_timer || 0) + 1,
-      }));
-    }, 1000);
-  } else {
-    setDeviceInfo((prev) => ({
-      ...prev,
+  const handleDisconnectSerial = async () => {
+    await disconnectSerial();
+    setDeviceInfo({
+      macId: "",
+      fwVersion: "",
+      serialNumber: "",
+      ssid: "",
+      ssid1: "",
+      ssid2: "",
+      ssid3: "",
+      hbt_counter: 0,
       hbt_timer: 0,
-    }));
-  }
-
-  // Cleanup function to clear interval when component unmounts or status changes
-  return () => {
-    if (intervalId) clearInterval(intervalId);
-  };
-}, [status]);
-
-
-
-
-const handleStart = () => {
-  if (mode === 'capture') {
-    // Generate file name
-    const now = new Date();
-    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD
-    const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, ''); // HHMMSS
-    setFileName(`CDACCute.${dateStr}.${timeStr}.txt`);
-    setCapturedPackets([]);
-    setTimer('00:00:00');
-    setIsStarted(true);
-    // Start timer
-    let seconds = 0;
-    timerRef.current = setInterval(() => {
-      seconds++;
-      const hrs = Math.floor(seconds / 3600).toString().padStart(2, '0');
-      const mins = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
-      const secs = (seconds % 60).toString().padStart(2, '0');
-      setTimer(`${hrs}:${mins}:${secs}`);
-    }, 1000);
-  } else if (mode === 'play') {
-    // For play mode, load file and start timed playback
-    if (fileName) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const content = e.target.result;
-        const packets = content.split('\n').filter(line => line.trim()).map(line => {
-          const [timestamp, data] = line.split(' - ');
-          return { timestamp, data };
-        });
-        setCapturedPackets(packets);
-        setTimer('00:00:00');
-        setIsStarted(true);
-        // Start timer
-        let seconds = 0;
-        timerRef.current = setInterval(() => {
-          seconds++;
-          const hrs = Math.floor(seconds / 3600).toString().padStart(2, '0');
-          const mins = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
-          const secs = (seconds % 60).toString().padStart(2, '0');
-          setTimer(`${hrs}:${mins}:${secs}`);
-        }, 1000);
-
-        // Schedule packet sending
-        packets.forEach((packet, index) => {
-          const [hrs, mins, secs] = packet.timestamp.split(':').map(Number);
-          const packetTime = hrs * 3600 + mins * 60 + secs;
-          setTimeout(async () => {
-            if (writer && isStarted) {
-              // Send packet as binary
-              const bytes = packet.data.split(' ').map(h => parseInt(h, 16));
-              await writer.write(new Uint8Array(bytes));
-              // Display in terminal
-              setUartData(prev => prev + `${packet.timestamp} - ${packet.data}\n`);
-            }
-          }, packetTime * 1000);
-        });
-      };
-      reader.readAsText(fileName);
-    }
-  }
-};
-
-const handleStop = () => {
-  if (mode === 'capture' && capturedPackets.length > 0) {
-    // Save to file
-    const content = capturedPackets.map(p => `${p.timestamp} - ${p.data}`).join('\n');
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.click();
-    URL.revokeObjectURL(url);
-    // Display captured data in terminal
-    setUartData(content);
-  }
-  setIsStarted(false);
-  if (timerRef.current) {
-    clearInterval(timerRef.current);
-    timerRef.current = null;
-  }
-};
-
-let uartBuffer = "";
-
-
-  // Connect to UART
- const connectSerial = async () => {
-  try {
-    const selectedPort = await navigator.serial.requestPort();
-    await selectedPort.open({ baudRate: 115200 });
-    setPort(selectedPort);
-    setStatus("Connected");
-
-    // Setup writer
-    const writer = selectedPort.writable.getWriter();
-    setWriter(writer);
-
-    // 🟢 Automatically send *RST# every time we connect/reconnect
-    await writer.write(new TextEncoder().encode("*RST#\n"));
-    setTimeout(async()=>{
-      await writer.write(new TextEncoder().encode("*SSID?#\n"));
-     
-    },5000)
-
-    setTimeout(async()=>{
-      await writer.write(new TextEncoder().encode("*TC?#\n"));
-      setTimeout(async()=>{
-          await writer.write(new TextEncoder().encode("*PULSES?#\n"));
-      },2000)
-    
-    },10000)
-
-    // Setup reader
-    const reader = selectedPort.readable.getReader();
-    setReader(reader);
-
-    const decoder = new TextDecoder();
-    let packetBuffer = new Uint8Array(); // Buffer for binary packets
-    const readLoop = async () => {
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value) {
-        const uint8Array = new Uint8Array(value);
-        const text = decoder.decode(value);
-
-        setUartData((prev) => prev + text);
-
-        uartBuffer += text;
-
-        // ✅ Extract only complete messages like "*...#"
-        const regex = /\*[^#]*#/g;
-        let match;
-        while ((match = regex.exec(uartBuffer)) !== null) {
-          const line = match[0].trim(); // full message, e.g. "*HBT-S#"
-          parseDeviceInfo(line);        // send to parser
-        }
-
-        // Keep only the leftover (after last #)
-        const lastHash = uartBuffer.lastIndexOf("#");
-        if (lastHash >= 0) {
-          uartBuffer = uartBuffer.slice(lastHash + 1);
-        }
-
-        // Process binary packets: 0xff ... 0xfe
-        for (let i = 0; i < uint8Array.length; i++) {
-          const byte = uint8Array[i];
-          if (byte === 0xff) {
-            // Start of packet
-            packetBuffer = new Uint8Array([byte]);
-          } else if (byte === 0xfe && packetBuffer.length > 0) {
-            // End of packet
-            packetBuffer = new Uint8Array([...packetBuffer, byte]);
-            if (isStarted && mode === 'capture') {
-              // Save packet with timestamp
-              const hexData = Array.from(packetBuffer).map(b => b.toString(16).padStart(2, '0')).join(' ');
-              setCapturedPackets(prev => {
-                const newPackets = [...prev, { timestamp: timer, data: hexData }];
-                // Display in real-time
-                setUartData(newPackets.map(p => `${p.timestamp} - ${p.data}`).join('\n'));
-                return newPackets;
-              });
-            }
-            packetBuffer = new Uint8Array();
-          } else if (packetBuffer.length > 0) {
-            // Continue packet
-            packetBuffer = new Uint8Array([...packetBuffer, byte]);
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.error("Read loop stopped:", err);
-  } finally {
-    reader.releaseLock();
-  }
-};
-
-
-    readLoop();
-  } catch (err) {
-    console.error("Error connecting to UART:", err);
-    setStatus("Error");
-  }
-};
-
-
-  // Disconnect UART
-  const disconnectSerial = async () => {
-    try {
-      if (reader) {
-        await reader.cancel();
-        reader.releaseLock();
-        setReader(null);
-      }
-      if (writer) {
-        writer.releaseLock();
-        setWriter(null);
-      }
-      if (port) {
-        await port.close();
-        setPort(null);
-      }
-      setUartData("");
-      setDeviceInfo({  macId: "",
-    fwVersion: "",
-    serialNumber: "",
-    ssid: "",
-    ssid1: "",
-    ssid2: "",
-    ssid3: "",
-    hbt_counter:0,
-    hbt_timer:0,
-    wifi_errors:0,
-    tcp_errors:0,
-    mqtt_errors:0,
-    mqtt_status:"FAILED",
-    tcp_status:"FAILED",
-    wifi_status:"FAILED",
-    wifi_failure_duration: "", // Store the duration
-    wifi_failed_at: "", // Reset failure timestamp
-    tc:"",
-    pulses:"",
-    lastTc:"",
-    lastPulses:"",
-    tcp_command_time:"",
-    mqtt_command_time:"",
-    inh:""});
-      setStatus("Disconnected");
-      console.log("✅ Disconnected and cleared data");
-    } catch (err) {
-      console.error("Error disconnecting:", err);
-    }
+      wifi_errors: 0,
+      tcp_errors: 0,
+      mqtt_errors: 0,
+      mqtt_status: "FAILED",
+      tcp_status: "FAILED",
+      wifi_status: "FAILED",
+      wifi_failure_duration: "",
+      wifi_failed_at: "",
+      tc: "",
+      pulses: "",
+      lastTc: "",
+      lastPulses: "",
+      tcp_command: "",
+      mqtt_command: "",
+      tcp_command_time: "",
+      mqtt_command_time: "",
+      inh: ""
+    });
   };
 
-  const sendSerial = async () => {
-    if (!writer || !msg) return;
-    try {
-      await writer.write(new TextEncoder().encode(msg + "\n"));
-      if(msg.includes("*RST#"))
-      {
-         setDeviceInfo((prev) => ({
-          ...prev,
-          ssid: "0"
-        }));
-          setTimeout(async()=>{
-          await writer.write(new TextEncoder().encode("*SSID?#\n"));
-        },5000)
-      }
-      setMsg("");
-    } catch (err) {
-      console.error("Send error:", err);
-    }
+  const handleSendSerial = async () => {
+    const success = await sendSerial(msg, setDeviceInfo);
+    if (success) setMsg("");
+  };
+
+  const handleClearTerminal = () => {
+    setUartData("");
+    setDeviceInfo({
+      macId: "",
+      fwVersion: "",
+      serialNumber: "",
+      ssid: ""
+    });
   };
 
   return (
@@ -611,8 +88,8 @@ let uartBuffer = "";
               </label>
             </div>
             <div>
-              <button onClick={handleStart} className="btn connect" disabled={isStarted}>Start</button>
-              <button onClick={handleStop} className="btn disconnect" disabled={!isStarted}>Stop</button>
+              <button onClick={() => handleStart(writer, setUartData)} className="btn connect" disabled={isStarted}>Start</button>
+              <button onClick={() => handleStop(setUartData)} className="btn disconnect" disabled={!isStarted}>Stop</button>
             </div>
             {mode === 'play' && (
               <input type="file" accept=".txt" onChange={(e) => setFileName(e.target.files[0])} />
