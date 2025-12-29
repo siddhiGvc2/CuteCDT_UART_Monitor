@@ -357,7 +357,7 @@ const handleStart = () => {
       setTimer(`${hrs}:${mins}:${secs}`);
     }, 1000);
   } else if (mode === 'play') {
-    // For play mode, load file and display packets
+    // For play mode, load file and start timed playback
     if (fileName) {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -367,7 +367,32 @@ const handleStart = () => {
           return { timestamp, data };
         });
         setCapturedPackets(packets);
-        setUartData(packets.map(p => `${p.timestamp} - ${p.data}`).join('\n'));
+        setTimer('00:00:00');
+        setIsStarted(true);
+        // Start timer
+        let seconds = 0;
+        timerRef.current = setInterval(() => {
+          seconds++;
+          const hrs = Math.floor(seconds / 3600).toString().padStart(2, '0');
+          const mins = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+          const secs = (seconds % 60).toString().padStart(2, '0');
+          setTimer(`${hrs}:${mins}:${secs}`);
+        }, 1000);
+
+        // Schedule packet sending
+        packets.forEach((packet, index) => {
+          const [hrs, mins, secs] = packet.timestamp.split(':').map(Number);
+          const packetTime = hrs * 3600 + mins * 60 + secs;
+          setTimeout(async () => {
+            if (writer && isStarted) {
+              // Send packet as binary
+              const bytes = packet.data.split(' ').map(h => parseInt(h, 16));
+              await writer.write(new Uint8Array(bytes));
+              // Display in terminal
+              setUartData(prev => prev + `${packet.timestamp} - ${packet.data}\n`);
+            }
+          }, packetTime * 1000);
+        });
       };
       reader.readAsText(fileName);
     }
@@ -385,6 +410,8 @@ const handleStop = () => {
     a.download = fileName;
     a.click();
     URL.revokeObjectURL(url);
+    // Display captured data in terminal
+    setUartData(content);
   }
   setIsStarted(false);
   if (timerRef.current) {
@@ -468,7 +495,12 @@ let uartBuffer = "";
             if (isStarted && mode === 'capture') {
               // Save packet with timestamp
               const hexData = Array.from(packetBuffer).map(b => b.toString(16).padStart(2, '0')).join(' ');
-              setCapturedPackets(prev => [...prev, { timestamp: timer, data: hexData }]);
+              setCapturedPackets(prev => {
+                const newPackets = [...prev, { timestamp: timer, data: hexData }];
+                // Display in real-time
+                setUartData(newPackets.map(p => `${p.timestamp} - ${p.data}`).join('\n'));
+                return newPackets;
+              });
             }
             packetBuffer = new Uint8Array();
           } else if (packetBuffer.length > 0) {
